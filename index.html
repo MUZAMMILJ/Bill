@@ -75,11 +75,30 @@
   details.drive input[type=text]{width:100%;padding:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-size:13px;margin-bottom:8px;outline:none}
   details.drive textarea{width:100%;padding:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-bottom:8px;outline:none;resize:vertical}
   details.drive textarea{width:100%;padding:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-bottom:8px;outline:none;resize:vertical}
+  #gate{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px}
+  #gate[hidden]{display:none}
+  .gcard{width:100%;max-width:380px;background:var(--card);border-radius:20px;box-shadow:var(--shadow);padding:30px 24px;text-align:center}
+  .gcard .logo{margin:0 auto 14px;width:56px;height:56px;font-size:28px;border-radius:16px}
+  .gcard h2{margin:0 0 6px;font-size:22px}
+  .gcard p{margin:0 0 20px;color:var(--muted);font-size:14px;line-height:1.5}
+  .gbtn{width:100%;padding:13px;font-size:15px;background:var(--accent);color:var(--accent-ink)}
+  .glink{display:block;margin:14px auto 0;background:none;border:0;color:var(--muted);font-size:13.5px;cursor:pointer;text-decoration:underline}
+  .gmsg{margin-top:12px;font-size:12.5px;color:var(--muted);min-height:16px}
   .warn{color:var(--minus);font-size:12.5px;margin:8px 0}
   .dstat{font-size:12.5px;color:var(--muted);margin-top:8px;min-height:16px}
 </style>
 </head>
 <body>
+<div id="gate">
+  <div class="gcard">
+    <div class="logo" style="background:#2a1a00;color:#ffbf47;display:grid;place-items:center;font-weight:800">B</div>
+    <h2>BeeN Calculator</h2>
+    <p>Sign in to load your saved bills on any device, and keep every month safely in your account.</p>
+    <button class="btn gbtn" onclick="cloudSignIn()">🔑 Sign in with Google</button>
+    <button class="glink" onclick="skipGate()">Continue without login</button>
+    <div class="gmsg" id="gateMsg"></div>
+  </div>
+</div>
 <div class="card">
   <header>
     <div class="brand">
@@ -368,7 +387,11 @@ $('importFile').onchange=e=>{
 // Put your Firebase web config here so the page only shows the Sign-in button:
 const FIREBASE_CONFIG = {apiKey:"AIzaSyCftYPEs4lnpum5R1zsqEo0J8eloVMYyuk",authDomain:"been-4ffed.firebaseapp.com",projectId:"been-4ffed",storageBucket:"been-4ffed.firebasestorage.app",messagingSenderId:"1054268044444",appId:"1:1054268044444:web:6de19aeec6ece17fdf2959"};   // e.g. { apiKey:"...", authDomain:"...", projectId:"...", appId:"..." }
 let FB=null, gUser=null;
-function setDrive(t){ $('dstat').textContent=t; }
+function setDrive(t){ $('dstat').textContent=t; if($('gateMsg')) $('gateMsg').textContent=t; }
+const store={g:k=>{try{return localStorage.getItem(k)}catch(e){return null}},s:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}},d:k=>{try{localStorage.removeItem(k)}catch(e){}}};
+function hideGate(){ $('gate').hidden=true; }
+function showGate(m){ $('gate').hidden=false; if(m!==undefined) $('gateMsg').textContent=m; }
+function skipGate(){ try{sessionStorage.setItem('beenSkip','1')}catch(e){} hideGate(); }
 function getCfg(){
   if(FIREBASE_CONFIG) return FIREBASE_CONFIG;
   const t=$('fbCfg').value, o={}; let m; const re=/(\w+)\s*:\s*["']([^"']*)["']/g;
@@ -385,14 +408,14 @@ async function fbInit(){
   catch(e){ throw new Error('No internet connection'); }
   const a=app.initializeApp(cfg);
   FB={auth,fs,au:auth.getAuth(a),db:fs.getFirestore(a)};
-  auth.onAuthStateChanged(FB.au,u=>{ gUser=u; authUI(); if(u) syncCloud(); });
+  auth.onAuthStateChanged(FB.au,u=>{ gUser=u; authUI(); if(u){ syncCloud(); } else if(store.g('beenWasIn') && !sessionStorage.getItem('beenSkip')){ store.d('beenWasIn'); showGate('Please sign in again.'); } });
   return FB;
 }
 function authUI(){
   const on=!!gUser;
   $('signInBtn').hidden=on; $('syncBtn').hidden=!on; $('signOutBtn').hidden=!on;
   $('cfgBox').hidden = !!FIREBASE_CONFIG || on;
-  if(on) setDrive('Signed in as '+(gUser.email||gUser.displayName));
+  if(on){ store.s('beenWasIn','1'); hideGate(); setDrive('Signed in as '+(gUser.email||gUser.displayName)); }
 }
 async function cloudSignIn(){
   setDrive('Opening Google sign-in…');
@@ -401,7 +424,7 @@ async function cloudSignIn(){
     await f.auth.signInWithPopup(f.au,new f.auth.GoogleAuthProvider());
   }catch(e){ setDrive('⚠ '+(e.code||e.message)); }
 }
-async function cloudSignOut(){ if(FB) await FB.auth.signOut(FB.au); gUser=null; authUI(); setDrive('Signed out.'); }
+async function cloudSignOut(){ if(FB) await FB.auth.signOut(FB.au); gUser=null; store.d('beenWasIn'); try{sessionStorage.removeItem('beenSkip')}catch(e){} authUI(); showGate('Signed out.'); }
 async function syncCloud(){
   if(!gUser||!FB) return setDrive('Sign in first.');
   setDrive('Syncing…');
@@ -426,7 +449,14 @@ $('people').oninput = $('round').onchange = () => {calc(); save()};
 let t=null; try{ t = localStorage.getItem('beenTheme'); }catch(e){}
 applyTheme(t ? t==='dark' : window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
 load(); calc();
-if(FIREBASE_CONFIG && navigator.onLine && location.protocol!=='file:') fbInit().catch(()=>{});
+(function startGate(){
+  const skipped=(()=>{try{return sessionStorage.getItem('beenSkip')}catch(e){return null}})();
+  if(location.protocol==='file:' || skipped){ hideGate(); return; }
+  const wasIn=store.g('beenWasIn');
+  if(wasIn) hideGate();                       // returning user: calculator opens at once
+  if(navigator.onLine){ fbInit().catch(e=>{ if(!wasIn) setDrive('⚠ '+e.message+' — you can continue without login.'); }); }
+  else if(!wasIn) setDrive('You are offline — continue without login.');
+})();
 </script>
 </body>
 </html>
