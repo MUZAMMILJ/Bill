@@ -72,6 +72,7 @@
   details.drive p{font-size:12.5px;color:var(--muted);line-height:1.5;margin:10px 0}
   details.drive input[type=text]{width:100%;padding:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-size:13px;margin-bottom:8px;outline:none}
   details.drive textarea{width:100%;padding:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-bottom:8px;outline:none;resize:vertical}
+  details.drive textarea{width:100%;padding:10px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-size:12px;font-family:ui-monospace,Consolas,monospace;margin-bottom:8px;outline:none;resize:vertical}
   .warn{color:var(--minus);font-size:12.5px;margin:8px 0}
   .dstat{font-size:12.5px;color:var(--muted);margin-top:8px;min-height:16px}
 </style>
@@ -130,13 +131,13 @@
         <input type="file" id="importFile" accept=".json,application/json" hidden>
       </div>
 
-      <details class="drive" id="driveBox">
-        <summary>☁️ Save to Google Drive</summary>
-        <p>Sign in with Google and the calculator creates a folder <b>“BeeN Calculator”</b> in your Drive and saves each month there as its own file (BeeN_2026-10.json). Sign in on any device to load old bills. It can only see the folder it created, nothing else in your Drive. Needs internet only while signing in or syncing.</p>
-        <div class="warn" id="fileWarn" hidden>Google sign-in does not work when this file is opened by double-click (file://). Open it from a web address (e.g. GitHub Pages / Firebase Hosting) or http://localhost, or use Export / Import above.</div>
-        <div id="cidBox">
-          <p>One-time setup: paste your Google <b>Client ID</b> (Google Cloud Console → APIs &amp; Services → Credentials → OAuth client ID, type “Web application”; enable the Google Drive API and add this page’s address as an Authorized JavaScript origin).</p>
-          <input type="text" id="clientId" placeholder="xxxx.apps.googleusercontent.com">
+      <details class="drive" id="driveBox" open>
+        <summary>☁️ Cloud save</summary>
+        <p>Sign in with Google and your bill history is saved to your account, so every device you sign in on sees the same months. Needs internet only while signing in or syncing.</p>
+        <div class="warn" id="fileWarn" hidden>Sign-in does not work when this file is opened by double-click (file://). Open it from the web address, or use Export / Import above.</div>
+        <div id="cfgBox">
+          <p>One-time setup: paste your Firebase web app config (Project settings → Your apps → firebaseConfig).</p>
+          <textarea id="fbCfg" rows="4" placeholder="{ apiKey: &quot;...&quot;, authDomain: &quot;...&quot;, projectId: &quot;...&quot;, appId: &quot;...&quot; }"></textarea>
         </div>
         <div class="actions" style="margin-top:0">
           <button class="mini" id="signInBtn" onclick="cloudSignIn()">🔑 Sign in with Google</button>
@@ -296,7 +297,7 @@ function snap(){
 }
 
 // ---------- Bill history (saved per month, stored in this browser) ----------
-const BILLS_KEY='beenBills', CID_KEY='beenClientId', DRIVE_FILE='BeeN_bills.json';
+const BILLS_KEY='beenBills', CID_KEY='beenFbCfg', DRIVE_FILE='BeeN_bills.json';
 function getBills(){ try{ return JSON.parse(localStorage.getItem(BILLS_KEY))||{}; }catch(e){ return {}; } }
 function putBills(b){ try{ localStorage.setItem(BILLS_KEY, JSON.stringify(b)); }catch(e){} }
 function curMonthKey(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
@@ -351,100 +352,61 @@ $('importFile').onchange=e=>{
   r.readAsText(f); e.target.value='';
 };
 
-// ---------- Google sign-in + Google Drive folder (loaded only when needed) ----------
-const CLIENT_ID_CONST = '';   // optional: paste your Google Client ID here so the page only shows the Sign-in button
-const FOLDER_NAME = 'BeeN Calculator';
-const API='https://www.googleapis.com/drive/v3/files', UP='https://www.googleapis.com/upload/drive/v3/files';
-let token=null, tokenExp=0, gUser=null, folderId=null;
+// ---------- One-click Google sign-in + cloud save (Firebase, loaded only when needed) ----------
+// Put your Firebase web config here so the page only shows the Sign-in button:
+const FIREBASE_CONFIG = null;   // e.g. { apiKey:"...", authDomain:"...", projectId:"...", appId:"..." }
+let FB=null, gUser=null;
 function setDrive(t){ $('dstat').textContent=t; }
-function clientId(){ return CLIENT_ID_CONST || $('clientId').value.trim(); }
-function loadGIS(){
-  return new Promise((res,rej)=>{
-    if(window.google && google.accounts) return res();
-    const s=document.createElement('script'); s.src='https://accounts.google.com/gsi/client';
-    s.onload=res; s.onerror=()=>rej(new Error('No internet connection')); document.head.appendChild(s);
-  });
+function getCfg(){
+  if(FIREBASE_CONFIG) return FIREBASE_CONFIG;
+  const t=$('fbCfg').value, o={}; let m; const re=/(\w+)\s*:\s*["']([^"']*)["']/g;
+  while((m=re.exec(t))) o[m[1]]=m[2];
+  if(!o.apiKey || !o.projectId) throw new Error('Paste the full firebaseConfig first');
+  try{ localStorage.setItem(CID_KEY,t); }catch(e){}
+  return o;
 }
-async function getToken(){
-  const id=clientId(); if(!id) throw new Error('Paste your Client ID first');
-  try{ localStorage.setItem(CID_KEY,id); }catch(e){}
-  await loadGIS();
-  return new Promise((res,rej)=>{
-    const tc=google.accounts.oauth2.initTokenClient({
-      client_id:id, scope:'openid email profile https://www.googleapis.com/auth/drive.file',
-      callback:r=>{ if(r.error) rej(new Error(r.error)); else { token=r.access_token; tokenExp=Date.now()+((r.expires_in||3600)-60)*1000; res(token); } },
-      error_callback:e=>rej(new Error((e&&e.type)||'Sign-in cancelled'))
-    });
-    tc.requestAccessToken({prompt: gUser ? '' : 'select_account'});
-  });
-}
-async function dapi(url,opts){
-  opts=opts||{};
-  const r=await fetch(url,{...opts,headers:{Authorization:'Bearer '+token,...(opts.headers||{})}});
-  if(!r.ok) throw new Error('Google error '+r.status);
-  return r;
+async function fbInit(){
+  if(FB) return FB;
+  const cfg=getCfg(), base='https://www.gstatic.com/firebasejs/10.12.2/';
+  let app,auth,fs;
+  try{ [app,auth,fs]=await Promise.all([import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')]); }
+  catch(e){ throw new Error('No internet connection'); }
+  const a=app.initializeApp(cfg);
+  FB={auth,fs,au:auth.getAuth(a),db:fs.getFirestore(a)};
+  auth.onAuthStateChanged(FB.au,u=>{ gUser=u; authUI(); if(u) syncCloud(); });
+  return FB;
 }
 function authUI(){
   const on=!!gUser;
   $('signInBtn').hidden=on; $('syncBtn').hidden=!on; $('signOutBtn').hidden=!on;
-  $('cidBox').hidden = !!CLIENT_ID_CONST || on;
-  if(on) setDrive('Signed in as '+(gUser.email||gUser.name));
+  $('cfgBox').hidden = !!FIREBASE_CONFIG || on;
+  if(on) setDrive('Signed in as '+(gUser.email||gUser.displayName));
 }
 async function cloudSignIn(){
   setDrive('Opening Google sign-in…');
   try{
-    await getToken();
-    gUser=await (await dapi('https://www.googleapis.com/oauth2/v3/userinfo')).json();
-    authUI(); await syncCloud();
-  }catch(e){ setDrive('⚠ '+e.message); }
+    const f=await fbInit();
+    await f.auth.signInWithPopup(f.au,new f.auth.GoogleAuthProvider());
+  }catch(e){ setDrive('⚠ '+(e.code||e.message)); }
 }
-function cloudSignOut(){
-  try{ if(token && window.google) google.accounts.oauth2.revoke(token,()=>{}); }catch(e){}
-  token=null; gUser=null; folderId=null; authUI(); setDrive('Signed out.');
-}
-async function ensureFolder(){
-  if(folderId) return folderId;
-  const q=encodeURIComponent("name='"+FOLDER_NAME+"' and mimeType='application/vnd.google-apps.folder' and trashed=false");
-  const l=await (await dapi(API+'?q='+q+'&fields=files(id)')).json();
-  if(l.files && l.files[0]) return folderId=l.files[0].id;
-  const c=await (await dapi(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'})})).json();
-  return folderId=c.id;
-}
-async function putFile(name,content,existingId){
-  const body=JSON.stringify(content);
-  if(existingId) return dapi(UP+'/'+existingId+'?uploadType=media',{method:'PATCH',headers:{'Content-Type':'application/json'},body});
-  const bd='beenboundary';
-  const mp='--'+bd+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+JSON.stringify({name,parents:[folderId],mimeType:'application/json'})+
-           '\r\n--'+bd+'\r\nContent-Type: application/json\r\n\r\n'+body+'\r\n--'+bd+'--';
-  return dapi(UP+'?uploadType=multipart',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+bd},body:mp});
-}
+async function cloudSignOut(){ if(FB) await FB.auth.signOut(FB.au); gUser=null; authUI(); setDrive('Signed out.'); }
 async function syncCloud(){
-  if(!gUser) return setDrive('Sign in first.');
+  if(!gUser||!FB) return setDrive('Sign in first.');
   setDrive('Syncing…');
   try{
-    if(!token || Date.now()>tokenExp) await getToken();
-    const folder=await ensureFolder();
-    const q=encodeURIComponent("'"+folder+"' in parents and trashed=false");
-    const files=(await (await dapi(API+'?q='+q+'&fields=files(id,name)&pageSize=200')).json()).files||[];
-    const remote={}, ids={};
-    await Promise.all(files.map(async f=>{
-      const m=f.name.match(/^BeeN_(\d{4}-\d{2})\.json$/); if(!m) return;
-      ids[m[1]]=f.id;
-      try{ remote[m[1]]=await (await dapi(API+'/'+f.id+'?alt=media')).json(); }catch(e){}
-    }));
+    const {doc,getDoc,setDoc}=FB.fs, ref=doc(FB.db,'beenBills',gUser.uid);
+    const snap=await getDoc(ref); let remote={};
+    if(snap.exists()){ try{ remote=JSON.parse(snap.data().data)||{}; }catch(e){} }
     const merged=mergeBills(getBills(),remote);
     putBills(merged); renderHistory();
-    for(const k in merged){
-      const r=remote[k];
-      if(!r || (merged[k].savedAt||0)>(r.savedAt||0)) await putFile('BeeN_'+k+'.json',merged[k],ids[k]);
-    }
-    setDrive('✔ Synced with Drive folder “'+FOLDER_NAME+'” · '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}));
-  }catch(e){ setDrive('⚠ '+e.message); }
+    await setDoc(ref,{data:JSON.stringify(merged),updatedAt:Date.now()});
+    setDrive('✔ Synced · '+(gUser.email||'')+' · '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}));
+  }catch(e){ setDrive('⚠ '+(e.code||e.message)); }
 }
 
 $('dateLine').textContent = nowStr();
 $('month').value = curMonthKey();
-try{ $('clientId').value = localStorage.getItem(CID_KEY)||''; }catch(e){}
+try{ $('fbCfg').value = localStorage.getItem(CID_KEY)||''; }catch(e){}
 authUI();
 if(location.protocol==='file:') $('fileWarn').hidden=false;
 renderHistory();
@@ -452,6 +414,7 @@ $('people').oninput = $('round').onchange = () => {calc(); save()};
 let t=null; try{ t = localStorage.getItem('beenTheme'); }catch(e){}
 applyTheme(t ? t==='dark' : window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
 load(); calc();
+if(FIREBASE_CONFIG && navigator.onLine && location.protocol!=='file:') fbInit().catch(()=>{});
 </script>
 </body>
 </html>
