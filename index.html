@@ -66,6 +66,8 @@
   .mini{border:0;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer;background:var(--accent);color:var(--accent-ink)}
   .mini.g{background:var(--card);color:var(--ink);border:1.5px solid var(--line)}
   .mini.r{background:var(--minus-bg);color:var(--minus)}
+  .hrow select{padding:10px;border:1.5px solid var(--line);background:var(--field);color:var(--ink);border-radius:10px;font-size:14px;flex:1;min-width:0;outline:none}
+  .hnote{font-size:12.5px;color:var(--muted);margin:2px 0 10px}
   .empty{color:var(--muted);font-size:13px;padding:6px 0}
   details.drive{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--field);margin-top:14px}
   details.drive summary{cursor:pointer;font-weight:700;font-size:14px}
@@ -124,7 +126,11 @@
         <input type="month" id="month">
         <button class="mini" onclick="saveMonth()">💾 Save this month</button>
       </div>
-      <div id="hist"></div>
+      <div class="hrow">
+        <select id="histSel" onchange="pickMonth()"><option value="">📂 Old bills…</option></select>
+        <button class="mini r" id="histDel" onclick="delSelected()" hidden>🗑 Delete</button>
+      </div>
+      <div class="hnote" id="histNote"></div>
       <div class="actions" style="margin-top:6px">
         <button class="mini g" onclick="exportBills()">⬇ Export backup</button>
         <button class="mini g" onclick="$('importFile').click()">⬆ Import backup</button>
@@ -310,7 +316,7 @@ function mergeBills(a,b){
 function saveMonth(){
   const k=$('month').value||curMonthKey(), c=compute(), b=getBills();
   b[k]={items:items(),people:$('people').value,round:$('round').value,total:c.total,each:c.each,savedAt:Date.now()};
-  putBills(b); renderHistory();
+  putBills(b); renderHistory(); $('histSel').value=k; histUI();
   $('msg').textContent='Saved '+monthLabel(k)+(gUser?' · syncing to Drive…':'');
   if(gUser) syncCloud();
 }
@@ -318,7 +324,7 @@ function loadMonth(k){
   const s=getBills()[k]; if(!s||s.deleted) return;
   $('rows').innerHTML=''; s.items.forEach(i=>addRow(i.name,i.amt,i.sign));
   $('people').value=s.people; $('round').value=s.round; $('month').value=k;
-  calc(); save(); $('msg').textContent='Loaded '+monthLabel(k); window.scrollTo({top:0,behavior:'smooth'});
+  calc(); save(); $('histSel').value=k; $('msg').textContent='Loaded '+monthLabel(k); window.scrollTo({top:0,behavior:'smooth'});
 }
 function delMonth(k){
   if(!confirm('Delete '+monthLabel(k)+' from history?')) return;
@@ -326,18 +332,24 @@ function delMonth(k){
   if(gUser) syncCloud();
 }
 function renderHistory(){
-  const b=getBills(), keys=Object.keys(b).filter(k=>!b[k].deleted).sort().reverse(), h=$('hist');
-  h.innerHTML='';
-  if(!keys.length){ h.innerHTML='<div class="empty">No saved months yet. Pick a month and tap “Save this month”.</div>'; return; }
+  const b=getBills(), keys=Object.keys(b).filter(k=>!b[k].deleted).sort().reverse(), sel=$('histSel'), cur=sel.value;
+  sel.innerHTML='<option value="">📂 Old bills ('+keys.length+')…</option>';
   keys.forEach(k=>{
-    const s=b[k], d=document.createElement('div'); d.className='hist';
-    d.innerHTML='<div class="m"><b></b><small></small></div><button class="mini g">Load</button><button class="mini r">×</button>';
-    d.querySelector('b').textContent=monthLabel(k);
-    d.querySelector('small').textContent='Total '+fmt(s.total)+' · Each '+fmt(s.each);
-    d.children[1].onclick=()=>loadMonth(k); d.children[2].onclick=()=>delMonth(k);
-    h.appendChild(d);
+    const o=document.createElement('option'); o.value=k;
+    o.textContent=monthLabel(k)+'  —  Each '+fmt(b[k].each);
+    sel.appendChild(o);
   });
+  sel.value = keys.includes(cur) ? cur : '';
+  histUI();
+  $('histNote').textContent = keys.length ? '' : 'No saved months yet. Pick a month and tap “Save this month”.';
 }
+function histUI(){
+  const k=$('histSel').value, s=k && getBills()[k];
+  $('histDel').hidden=!k;
+  if(s && !s.deleted) $('histNote').textContent='Total '+fmt(s.total)+' · Each '+fmt(s.each)+' · '+s.people+' people';
+}
+function pickMonth(){ const k=$('histSel').value; if(k) loadMonth(k); histUI(); }
+function delSelected(){ const k=$('histSel').value; if(k) delMonth(k); }
 function exportBills(){
   const blob=new Blob([JSON.stringify(getBills(),null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=DRIVE_FILE;
