@@ -176,6 +176,7 @@
 </div>
 
 <script>
+const APP_VERSION = '2026-11-04-3';
 const DEFAULT_ITEMS = [
   ["Rent",26000],["E bill",5000],["Net",2500],["Water",1560],["Safai",1200],
   ["Out safai",500],["Security card",200],["Extra thing I paid",4500],["Old bill",6500]
@@ -449,6 +450,16 @@ $('people').oninput = $('round').onchange = () => {calc(); save()};
 let t=null; try{ t = localStorage.getItem('beenTheme'); }catch(e){}
 applyTheme(t ? t==='dark' : window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
 load(); calc();
+// Auto-update: if a newer version of this page is online, reload once to get it (no ?v= needed)
+(function(){
+  if(location.protocol==='file:' || !navigator.onLine) return;
+  fetch(location.pathname,{cache:'reload'}).then(r=>r.text()).then(t=>{
+    const m=t.match(/APP_VERSION\s*=\s*'([^']+)'/);
+    if(m && m[1]!==APP_VERSION){
+      if(!sessionStorage.getItem('beenUpd')){ sessionStorage.setItem('beenUpd','1'); location.reload(); }
+    } else { sessionStorage.removeItem('beenUpd'); }
+  }).catch(()=>{});
+})();
 (function startGate(){
   const skipped=(()=>{try{return sessionStorage.getItem('beenSkip')}catch(e){return null}})();
   if(location.protocol==='file:' || skipped){ hideGate(); return; }
